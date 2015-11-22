@@ -1,0 +1,149 @@
+---
+title: "Practical Machine Learning Project"
+author: "vporoyko"
+date: "November 20, 2015"
+output: html_document
+---
+Background:
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Data: 
+The training data for this project are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+Objectives:
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details. 
+
+Reproducibility: 
+Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis. 
+
+Load libraries
+```{r}
+library(abind)
+library(arm)
+library(caret)
+library(kernlab)
+library(klaR)
+library(randomForest)
+library(rpart)
+set.seed(12345)
+```
+
+Download data:
+
+```{r, }
+path=getwd()
+url1="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(url1,destfile="training.csv")
+download.file(url2,destfile="testing.csv")
+
+train=read.csv("training.csv", na.strings=c("NA","#DIV/0!",""))
+test=read.csv("testing.csv", na.strings=c("NA","#DIV/0!",""))
+
+```
+
+Preprocessing:
+```{r}
+#the size of training set
+dim(train)
+#near zero variance removal 
+NZ=nearZeroVar(train, saveMetrics=TRUE)
+train=train[,!NZ$nzv]
+dim(train)
+#remove columncs with >50% "NA"
+NA50<-sapply(colnames(train), function(x) if(sum(is.na(train[,x]))>0.5*nrow(train)){return(TRUE)}else{return(FALSE)})
+train=train[,!NA50]
+dim(train)
+#remove variables which are not relevant for motility measurements
+# [1] "X"                    "user_name"            "raw_timestamp_part_1" 
+# "raw_timestamp_part_2"
+# [5] "cvtd_timestamp"       "num_window" 
+train<-train[, -(1:6)]
+#size of the tidy training set
+dim(train)
+```
+
+Search for highly correlated variables ($classe excluded)
+```{r}
+correlated=caret::findCorrelation(cor(train[,-53]),cutoff=0.8)
+#Percent of highly correlated study varibales:
+length(correlated)/length(names(train))
+#Names of highly correlated study varibales:
+names(train)[correlated]
+
+```
+Conclusion: The large amount of highly correlated variables justifies PCA preprocessing.
+
+PreProcess object created implementing 10X Cross Validation. 
+```{r}
+CrosValSet<-trainControl(method = "cv", number=10, verboseIter = FALSE, preProcOptions="pca", allowParallel = TRUE)
+
+```
+Out of the large amount of available models seven will be tested:
+Random Forest
+Support Vector Machine (linear)
+Support Vector Machine (radial)
+Neural net
+Logit Boosted Model
+Bayesian Generalizsed Linear Model
+Decision Tree
+
+```{r,echo=FALSE}
+RF <‐ train(classe ~ ., data = train, method = "rf", trControl= CrosValSet)
+svml<-train(classe ~ ., data = train, method = "svmLinear", trControl= CrosValSet)
+svmr <‐ train(classe ~ ., data = train, method = "svmRadial", trControl= CrosValSet)
+NNet <‐ train(classe ~ ., data = train, method = "nnet", trControl= CrosValSet, verbose=FALSE)
+LogitBoost<- train(classe ~ ., data = train, method = "LogitBoost", trControl= CrosValSet)
+BayesGlm<-train(classe ~ ., data = train, method = "bayesglm", trControl= CrosValSet, verbose=FALSE)
+tree<-train(classe ~ ., data = train, method = "rpart", trControl= CrosValSet)
+```
+
+Accuracy estimation and model selection
+```{r}
+Model<-c("RF","Support Vector Machine (linear)","Support Vector Machine (radial)","Neural net","Logit Boosted Model","Bayesian GLM","Decison Tree")
+Accuracy<-c(max(RF$results$Accuracy),max(svml$results$Accuracy),max(svmr$results$Accuracy),max(NNet$results$Accuracy),max(LogitBoost$results$Accuracy),max(BayesGlm$results$Accuracy),max(tree$results$Accuracy))
+compar<-cbind(Model,Accuracy )
+knitr::kable(compar)
+```
+
+Conclusion: Random Forest algorithm demonstrates best performance. RF model will be used in test submission.
+
+Prepare test set by implementing similar preprocessing routine. 
+```{r}
+dim(test) #initial size
+test=test[,!NZ$nzv]
+dim(test)
+test=test[,!NA50]
+dim(test)
+test<-test[, -(1:6)]
+dim(test) #final size
+
+```
+Prediction of $classe.
+```{r}
+RFpredict<-predict(RF,test)
+out<-cbind(test$problem_id,RFpredict )
+knitr::kable(out)
+
+```
+
+Parse RFpredict for submission.
+```{r}
+#load parsing function
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+#process output
+pml_write_files(RFpredict)
+```
